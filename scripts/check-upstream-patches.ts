@@ -111,6 +111,13 @@ export function auditUpstreamPatches(repoRoot: string): PatchAuditResult {
 
     const headerPaths = extractUpstreamPaths(headerSlice)
     const verifyPaths = extractUpstreamPaths(verifyMatches)
+    const allVerifyRepoPaths = extractVerifyRepoPaths(verifyMatches)
+
+    allVerifyRepoPaths.forEach((relPath) => {
+      if (!existsSync(path.join(repoRoot, relPath))) {
+        errors.push(`${relPath}: listed under Verify in UPSTREAM-PATCHES.md INTRUSIVE section but file is missing`)
+      }
+    })
 
     headerPaths.forEach((relPath) => {
       const full = path.join(repoRoot, relPath)
@@ -321,41 +328,139 @@ function hasValidSpinnerWrapperBody(codeOnly: string): boolean {
 }
 
 function hasTopLevelUnconditionalCall(codeOnly: string, fnName: string): boolean {
-  const callLinePattern = new RegExp(`^\\s*${fnName}\\s*\\(\\s*\\)\\s*;?\\s*$`)
-  const state = { depth: 0, prevControlContinuation: false, found: false }
-  codeOnly.split("\n").forEach((line) => {
-    const trimmed = line.trim()
-    if (state.depth === 0 && !state.prevControlContinuation && callLinePattern.test(line)) {
-      state.found = true
+  const tokens = tokenizeJs(codeOnly)
+  const cursor = { index: 0 }
+
+  const peek = (offset = 0) => tokens[cursor.index + offset]
+  const skipNewlines = () => {
+    while (peek() === "\n") cursor.index += 1
+  }
+  const skipBalanced = (open: string, close: string): boolean => {
+    if (peek() !== open) return false
+    const state = { depth: 0 }
+    while (cursor.index < tokens.length) {
+      const tok = peek()!
+      cursor.index += 1
+      if (tok === open) state.depth += 1
+      else if (tok === close) {
+        state.depth -= 1
+        if (state.depth === 0) return true
+      }
     }
-    for (const ch of line) {
-      if (ch === "{" || ch === "(" || ch === "[") state.depth += 1
-      else if (ch === "}" || ch === ")" || ch === "]") state.depth = Math.max(0, state.depth - 1)
+    return false
+  }
+  const isContinuationBeforeNewline = (tok: string | undefined) =>
+    tok !== undefined &&
+    (/^(?:=>|[=?&|:+\-*/%,.([])$/.test(tok) || /^(?:else|do|return|await|yield|typeof|void|delete|new)$/.test(tok))
+
+  const skipSubordinateStatement = (): void => {
+    skipNewlines()
+    const head = peek()
+    if (!head) return
+    if (head === ";") {
+      cursor.index += 1
+      return
     }
-    if (trimmed.length > 0) {
-      state.prevControlContinuation = isDanglingControlLine(trimmed)
+    if (head === "{") {
+      skipBalanced("{", "}")
+      return
     }
-  })
-  return state.found
+    if (head === "if" || head === "while" || head === "for") {
+      cursor.index += 1
+      skipNewlines()
+      if (!skipBalanced("(", ")")) return
+      skipSubordinateStatement()
+      if (head === "if") {
+        const saved = cursor.index
+        skipNewlines()
+        if (peek() === "else") {
+          cursor.index += 1
+          skipSubordinateStatement()
+        } else {
+          cursor.index = saved
+        }
+      }
+      return
+    }
+    if (head === "do") {
+      cursor.index += 1
+      skipSubordinateStatement()
+      skipNewlines()
+      if (peek() === "while") {
+        cursor.index += 1
+        skipNewlines()
+        skipBalanced("(", ")")
+      }
+      return
+    }
+    const state = { depth: 0, prevNonNl: "" }
+    while (cursor.index < tokens.length) {
+      const tok = peek()!
+      if (state.depth === 0) {
+        if (tok === ";") {
+          cursor.index += 1
+          return
+        }
+        if (tok === "\n" && state.prevNonNl && !isContinuationBeforeNewline(state.prevNonNl)) {
+          cursor.index += 1
+          return
+        }
+      }
+      if (tok === "(" || tok === "[" || tok === "{") state.depth += 1
+      else if (tok === ")" || tok === "]" || tok === "}") state.depth = Math.max(0, state.depth - 1)
+      if (tok !== "\n") state.prevNonNl = tok
+      cursor.index += 1
+    }
+  }
+
+  while (cursor.index < tokens.length) {
+    while (peek() === "\n" || peek() === ";") cursor.index += 1
+    const tok = peek()
+    if (!tok) break
+    if (
+      tok === fnName &&
+      peek(1) === "(" &&
+      peek(2) === ")" &&
+      (peek(3) === undefined || peek(3) === ";" || peek(3) === "\n")
+    ) {
+      return true
+    }
+    skipSubordinateStatement()
+  }
+  return false
 }
 
-function isDanglingControlLine(trimmed: string): boolean {
-  if (/(?:=>|[=?&|:+\-*/%,(])$/.test(trimmed)) return true
-  if (/^(?:else|do|return)$/.test(trimmed)) return true
-  if (/^(?:export\s+)?(?:async\s+)?function\b[^{]*\)$/.test(trimmed)) return true
-  const header = trimmed.match(/^(?:else\s+)?(?:if|while|for)\s*\(/)
-  if (!header) return false
-  const cursor = { index: header[0].length, depth: 1 }
-  while (cursor.index < trimmed.length && cursor.depth > 0) {
-    const ch = trimmed[cursor.index]
-    if (ch === "(") cursor.depth += 1
-    else if (ch === ")") cursor.depth -= 1
-    cursor.index += 1
+function tokenizeJs(codeOnly: string): string[] {
+  const tokens: string[] = []
+  const pattern = /\n|=>|[A-Za-z_$][\w$]*|\d+(?:\.\d+)?|'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|`(?:\\.|[^`\\])*`|[{}()[\];,.?:+\-*/%&|=!<>~^]/g
+  for (const match of codeOnly.matchAll(pattern)) {
+    tokens.push(match[0]!)
   }
-  if (cursor.depth !== 0) return true
-  const remainder = trimmed.slice(cursor.index).trim()
-  if (!remainder) return true
-  return isDanglingControlLine(remainder)
+  return tokens
+}
+
+function extractVerifyRepoPaths(verifyText: string): string[] {
+  const found = new Set<string>()
+  const state = { lastDir: "" }
+  for (const match of verifyText.matchAll(/`([^`]+)`/g)) {
+    const span = (match[1] ?? "").trim()
+    const cdRun = span.match(/^cd\s+(packages\/[\w-]+)\s*&&\s*bun\s+test\s+([^\s`]+\.(?:ts|tsx|js|mjs))$/)
+    if (cdRun) {
+      const joined = `${cdRun[1]}/${cdRun[2]!.replace(/^\.\//, "")}`
+      found.add(joined)
+      state.lastDir = path.posix.dirname(joined)
+      continue
+    }
+    if (/^(?:packages\/[\w-]+\/|scripts\/|\.github\/scripts\/)[^\s`]+\.(?:ts|tsx|js|mjs)$/.test(span)) {
+      found.add(span)
+      state.lastDir = path.posix.dirname(span)
+      continue
+    }
+    if (state.lastDir && /^[\w.-]+\.test\.(?:ts|tsx|js|mjs)$/.test(span)) {
+      found.add(`${state.lastDir}/${span}`)
+    }
+  }
+  return [...found]
 }
 
 function parseJsonObject(text: string): Record<string, unknown> | undefined {

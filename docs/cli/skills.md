@@ -1,11 +1,11 @@
 # 技能加载与外部客户端接入
 
-`cz-cli` 当前不再随包捆绑任何内置 skill；`cz-cli agent` 加载用户本地安装的技能与外部 AI 客户端接入 cz-cli 是两条完全独立的路径：
+仓库已移除历史遗留的 `skills/cz-cli/` 外部客户端技能；`cz-cli agent` 自身的技能加载（含发布期打包的外部仓技能与用户本地安装的技能）与外部 AI 客户端通过 MCP 接入是两条独立的路径：
 
 ## 当前行为
 
-- **本地 `cz-cli agent` 加载用户安装的技能**：运行时扫描 `~/.clickzetta/skill/` 与 `~/.clickzetta/skills/` 下带有 `SKILL.md` 的目录并交给上游加载。
-- **安装器对 `.builtin/` 目录的清理与托管**：构建脚本仅在仓库 `skills/` 或 `skills/external/` 下存在 `SKILL.md` 目录时才会打包技能（当前已移除历史 `skills/cz-cli/`，随包技能数为 0）。npm 安装、归档安装与生成的 PowerShell 安装器在安装/升级时会重建 `~/.clickzetta/skills/.builtin/`，从而清空旧版本遗留的随包技能。
+- **本地 `cz-cli agent` 技能加载**：运行时扫描 `~/.clickzetta/skill/` 与 `~/.clickzetta/skills/` 下带有 `SKILL.md` 的目录（包括安装器写入的 `.builtin/` 子目录及用户自行安装的技能目录）并交给上游加载。
+- **发布期外部技能同步与 `.builtin/` 重建托管**：仓库源码树内已删除旧的 `skills/cz-cli/`，但发布工作流（`.github/workflows/release-cos.yml`）在构建前会将 `clickzetta/clickzetta-skills` 中匹配的技能（如 `clickzetta-*`、`lakehouse-doc*`）同步至 `skills/external/`，由 `packages/cz-cli/script/build.ts` 收集所有含 `SKILL.md` 的技能目录打入各平台产物的 `bin/skills/`。npm 安装、归档安装与生成的 PowerShell 安装器在安装/升级时会重建 `~/.clickzetta/skills/.builtin/` 并写入随包技能，避免已下线的旧版本技能残留。
 - **外部 AI 客户端通过 MCP 接入**：安装器不再向 Claude Code、Codex、Cursor 等外部客户端的技能目录写入技能，而是在升级时清理旧的 `cz-cli`、`czagent`、`czcli`、`cz-cli-v2` 目录，并引导运行 `cz-cli mcp init` 注册 MCP 服务。
 
 ## 维护约束

@@ -496,14 +496,78 @@ test("auditUpstreamPatches rejects a no-op registerOpencodeSpinner() wrapper, ac
   )
   expect(auditUpstreamPatches(root).ok).toBe(true)
 
-  // Execute the real registerOpencodeSpinner() module in packages/tui to prove runtime registration succeeds
+  // Multiline braceless `if (\n  false\n)\n  registerOpencodeSpinner()` must FAIL
+  writeFileSync(
+    path.join(root, "packages/tui/src/app.tsx"),
+    [
+      'import { registerOpencodeSpinner } from "./component/register-spinner"',
+      "//======================== cz-cli change ========================",
+      "if (",
+      "  false",
+      ")",
+      "  registerOpencodeSpinner()",
+      "//====================== end cz-cli change ======================",
+    ].join("\n"),
+  )
+  const multilineIfResult = auditUpstreamPatches(root)
+  expect(multilineIfResult.ok).toBe(false)
+  expect(
+    multilineIfResult.errors.some((e) =>
+      e.includes("packages/tui/src/app.tsx") && e.includes("top-level registerOpencodeSpinner() startup call"),
+    ),
+  ).toBe(true)
+
+  // Missing Verify test file (e.g. discovery test from entry 7) must FAIL
+  writeFileSync(
+    path.join(root, "packages/cz-cli/UPSTREAM-PATCHES.md"),
+    [
+      "# Ledger (currently baselined at v1.17.11)",
+      "## Bannered upstream files (CI-enforced)",
+      "- `packages/tui/src/app.tsx` (1 banner)",
+      "## INTRUSIVE patches",
+      "### 7. Provider discovery",
+      "- **File:** `packages/tui/src/app.tsx`",
+      "- **What/why:** discovery.",
+      "- **Verify:** `packages/opencode/test/provider/clickzetta-discovery.test.ts` and `clickzetta-context-limit.test.ts`",
+      "### 12. Spinner registration",
+      "- **File:** `packages/tui/src/app.tsx`",
+      "- **What/why:** call `registerOpencodeSpinner()` in every TUI entrypoint.",
+      "## HOOK-based customizations",
+    ].join("\n"),
+  )
+  writeFileSync(
+    path.join(root, "packages/tui/src/app.tsx"),
+    [
+      'import { registerOpencodeSpinner } from "./component/register-spinner"',
+      "//======================== cz-cli change ========================",
+      "registerOpencodeSpinner()",
+      "//====================== end cz-cli change ======================",
+    ].join("\n"),
+  )
+  const missingVerifyResult = auditUpstreamPatches(root)
+  expect(missingVerifyResult.ok).toBe(false)
+  expect(
+    missingVerifyResult.errors.some(
+      (e) => e.includes("packages/opencode/test/provider/clickzetta-discovery.test.ts") && e.includes("listed under Verify"),
+    ),
+  ).toBe(true)
+  expect(
+    missingVerifyResult.errors.some(
+      (e) => e.includes("packages/opencode/test/provider/clickzetta-context-limit.test.ts") && e.includes("listed under Verify"),
+    ),
+  ).toBe(true)
+
+  const czTestWorkflow = await Bun.file(new URL("../../workflows/cz-test.yml", import.meta.url)).text()
+  expect(czTestWorkflow).toContain('test -f "$pkg/$rel"')
+
+  // Execute the real registerOpencodeSpinner() module after clearing spinner to prove wrapper restores missing registration
   const tuiDir = path.resolve(import.meta.dir, "../../../packages/tui")
   if (existsSync(path.join(tuiDir, "node_modules")) || existsSync(path.resolve(tuiDir, "../../node_modules"))) {
     const proc = Bun.spawn(
       [
         process.execPath,
         "-e",
-        'import { getComponentCatalogue } from "@opentui/solid/components"; import { registerOpencodeSpinner } from "./src/component/register-spinner.ts"; registerOpencodeSpinner(); if (!getComponentCatalogue().spinner) process.exit(1);',
+        'import { getComponentCatalogue } from "@opentui/solid/components"; import { registerOpencodeSpinner } from "./src/component/register-spinner.ts"; delete (getComponentCatalogue() as Record<string, unknown>).spinner; if (getComponentCatalogue().spinner) process.exit(2); registerOpencodeSpinner(); if (!getComponentCatalogue().spinner) process.exit(1);',
       ],
       { cwd: tuiDir, stdout: "pipe", stderr: "pipe" },
     )

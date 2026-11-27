@@ -40,9 +40,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - uses: ./.github/actions/setup-bun-runtime
-      - name: Install pinned Codex CLI
-        run: npm install --global @openai/codex@0.167.1
-      - name: Resolve and validate PR identity
+      - name: Resolve PR identity and classify full diff
         id: identity
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -52,6 +50,7 @@ jobs:
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
         run: |
           bun -e '
+            import { hasReviewablePaths } from "./.github/scripts/ai-review.ts";
             const number = process.env.REVIEW_NUMBER;
             if (!/^[1-9]\d*$/.test(number)) throw new Error("Invalid PR number");
             const child = Bun.spawn(["gh", "api", `repos/${process.env.GITHUB_REPOSITORY}/pulls/${number}`]);
@@ -60,13 +59,24 @@ jobs:
                 (process.env.DRY_RUN !== "true" && pr.state !== "open") ||
                 (process.env.EXPECTED_HEAD && pr.head.sha !== process.env.EXPECTED_HEAD) ||
                 (process.env.EXPECTED_BASE && pr.base.sha !== process.env.EXPECTED_BASE)) throw new Error("PR identity changed or is ineligible");
+            const fetchProc = Bun.spawn(["git", "fetch", "--no-tags", "origin", pr.head.sha, pr.base.sha]);
+            if (await fetchProc.exited !== 0) throw new Error("Failed to fetch immutable PR commits");
+            const diffProc = Bun.spawn(["git", "diff", "--no-color", "--no-ext-diff", "--find-renames", "--src-prefix=a/", "--dst-prefix=b/", "--unified=0", `${pr.base.sha}...${pr.head.sha}`]);
+            const diff = await new Response(diffProc.stdout).text();
+            if (await diffProc.exited !== 0) throw new Error("Failed to compute full PR diff");
+            const skipDocsOnly = process.env.DRY_RUN !== "true" && !hasReviewablePaths(diff);
             const file = Bun.file(process.env.GITHUB_OUTPUT);
-            await Bun.write(file, await file.text() + `head=${pr.head.sha}\nbase=${pr.base.sha}\n`);
+            await Bun.write(file, await file.text() + `head=${pr.head.sha}\nbase=${pr.base.sha}\nskip_docs_only=${skipDocsOnly}\n`);
           '
+      - name: Install pinned Codex CLI
+        if: steps.identity.outputs.skip_docs_only != 'true'
+        run: npm install --global @openai/codex@0.167.1
       # Match Codex Action's default privilege reduction on an ephemeral runner.
       - name: Remove passwordless privilege escalation
+        if: steps.identity.outputs.skip_docs_only != 'true'
         run: sudo rm -f /etc/sudoers.d/runner /usr/bin/sudo /bin/sudo
       - name: Review immutable head and publish validated inline findings
+        if: steps.identity.outputs.skip_docs_only != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REVIEW_PR_NUMBER: ${{ github.event.pull_request.number || inputs.pull_request }}

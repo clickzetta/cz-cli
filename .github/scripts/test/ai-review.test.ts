@@ -343,6 +343,9 @@ test("root Markdown with spaces skips review while AGENTS.md and CLAUDE.md trigg
   const workflow = await Bun.file(new URL("../../workflows/claude-review.yml", import.meta.url)).text()
   expect(workflow).not.toContain("\n    paths:")
   expect(workflow).not.toContain("\n    paths-ignore:")
+  expect(workflow.indexOf("hasReviewablePaths")).toBeGreaterThan(0)
+  expect(workflow.indexOf("hasReviewablePaths")).toBeLessThan(workflow.indexOf("Install pinned Codex CLI"))
+  expect(workflow).toContain("if: steps.identity.outputs.skip_docs_only != 'true'")
 })
 
 test("rename detection matches GitHub PR diff paths for pure and edited renames", async () => {
