@@ -1,5 +1,6 @@
 import { chmodSync, mkdirSync } from "node:fs"
 import path from "node:path"
+import { isDeepStrictEqual } from "node:util"
 import { executeReview } from "./review-executor"
 
 export type DiffLineMap = {
@@ -135,7 +136,7 @@ export type MdxSourceMap = {
   right: Map<string, string>
 }
 
-type DiffMdxEntry = {
+type DiffDocEntry = {
   targetFile: string
   oldFile: string
   newFile: string
@@ -145,24 +146,28 @@ type DiffMdxEntry = {
   addedHunkIndices: number[]
 }
 
+const starlightPage = /^packages\/web\/src\/content\/docs\/.*\.(?:md|mdx)$/i
+
 function parseDiffEntries(diff: string) {
   const touched = new Set<string>()
-  const mdxEntries = new Map<string, DiffMdxEntry>()
+  const docEntries = new Map<string, DiffDocEntry>()
   const locations = diffLineLocations(diff)
   locations.right.forEach((_, file) => touched.add(file))
   locations.left.forEach((_, file) => touched.add(file))
 
   const state = { inHunk: false, oldFile: "", newFile: "", headerPath: "" }
-  const ensureMdxEntry = () => {
+  const ensureDocEntry = () => {
     const targetFile = state.newFile || state.oldFile || state.headerPath
-    if (!targetFile || !/\.mdx$/i.test(targetFile)) return undefined
-    const existing = mdxEntries.get(targetFile)
+    if (!/\.mdx$/i.test(targetFile) && !starlightPage.test(targetFile) && !starlightPage.test(state.oldFile)) {
+      return undefined
+    }
+    const existing = docEntries.get(targetFile)
     if (existing) {
       if (state.oldFile) existing.oldFile = state.oldFile
       if (state.newFile) existing.newFile = state.newFile
       return existing
     }
-    const created: DiffMdxEntry = {
+    const created: DiffDocEntry = {
       targetFile,
       oldFile: state.oldFile,
       newFile: state.newFile,
@@ -171,13 +176,13 @@ function parseDiffEntries(diff: string) {
       deletedHunkIndices: [],
       addedHunkIndices: [],
     }
-    mdxEntries.set(targetFile, created)
+    docEntries.set(targetFile, created)
     return created
   }
 
   diff.split("\n").forEach((line) => {
     if (line.startsWith("diff --git ")) {
-      ensureMdxEntry()
+      ensureDocEntry()
       state.inHunk = false
       state.oldFile = ""
       state.newFile = ""
@@ -193,16 +198,16 @@ function parseDiffEntries(diff: string) {
     if (!state.inHunk && line.startsWith("+++ ")) {
       const file = decodeGitPath(line.slice(4).split("\t", 1)[0])
       if (file.startsWith("b/")) state.newFile = file.slice(2)
-      ensureMdxEntry()
+      ensureDocEntry()
       return
     }
     if (line.startsWith("@@ ")) {
       state.inHunk = true
-      ensureMdxEntry()
+      ensureDocEntry()
       return
     }
     if (state.inHunk) {
-      const entry = ensureMdxEntry()
+      const entry = ensureDocEntry()
       if (!entry) return
       if (line.startsWith("-")) {
         entry.beforeHunkLines.push(line.slice(1))
@@ -233,28 +238,29 @@ function parseDiffEntries(diff: string) {
       const decoded = decodeGitPath(line.slice(prefix.length))
       state.newFile = decoded
       touched.add(decoded)
-      ensureMdxEntry()
+      ensureDocEntry()
     }
   })
-  ensureMdxEntry()
-  return { touched, mdxEntries, locations }
+  ensureDocEntry()
+  return { touched, docEntries, locations }
 }
 
+// Starlight applies the same page metadata schema to Markdown and MDX.
 export async function loadDiffMdxSources(
   diff: string,
   baseSha: string,
   headSha: string,
   cwd = process.cwd(),
 ): Promise<MdxSourceMap> {
-  const { mdxEntries } = parseDiffEntries(diff)
+  const { docEntries } = parseDiffEntries(diff)
   const left = new Map<string, string>()
   const right = new Map<string, string>()
-  if (mdxEntries.size === 0) return { left, right }
+  if (docEntries.size === 0) return { left, right }
 
   const mergeBaseOut = await gitOptional(["merge-base", baseSha, headSha], cwd)
   const leftRev = mergeBaseOut?.trim() || baseSha
 
-  for (const entry of mdxEntries.values()) {
+  for (const entry of docEntries.values()) {
     const oldPath = entry.oldFile || entry.targetFile
     const newPath = entry.newFile || entry.targetFile
     if (oldPath) {
@@ -269,14 +275,23 @@ export async function loadDiffMdxSources(
   return { left, right }
 }
 
-export function hasReviewablePaths(diff: string, mdxSources?: MdxSourceMap): boolean {
-  const { touched, mdxEntries, locations } = parseDiffEntries(diff)
+export function hasReviewablePaths(diff: string, docSources?: MdxSourceMap): boolean {
+  const { touched, docEntries, locations } = parseDiffEntries(diff)
   const rootReviewableDocs = /^(?:AGENTS|CLAUDE|SECURITY|LICENSE)\.(?:md|mdx)$/i
   const docStaticImage = /\.(?:png|jpe?g|gif|webp|avif|ico)$/i
   return [...touched].some((file) => {
     if (file === ".github/codex-review-prompt.md" || file === ".github/claude-review-context.md") return true
     if (file.startsWith("docs/maintenance/")) return true
-    if (/\.mdx$/i.test(file) && isReviewableMdxFile(file, mdxEntries.get(file), locations, mdxSources)) return true
+    const entry = docEntries.get(file)
+    if (entry && docSources) {
+      const leftDoc = docSources.left.get(file)
+      const rightDoc = docSources.right.get(file)
+      const leftHead = leftDoc !== undefined && starlightPage.test(entry.oldFile || file) ? starlightHead(leftDoc) : []
+      const rightHead =
+        rightDoc !== undefined && starlightPage.test(entry.newFile || file) ? starlightHead(rightDoc) : []
+      if (!isDeepStrictEqual(leftHead, rightHead)) return true
+    }
+    if (/\.mdx$/i.test(file) && isReviewableMdxFile(file, entry, locations, docSources)) return true
     if (/^docs\/.*\.(?:md|mdx|txt)$/i.test(file) || (/^docs\//.test(file) && docStaticImage.test(file))) return false
     if (
       /^packages\/docs\/.*\.(?:md|mdx|txt)$/i.test(file) ||
@@ -285,7 +300,8 @@ export function hasReviewablePaths(diff: string, mdxSources?: MdxSourceMap): boo
       return false
     }
     if (
-      /^packages\/web\/src\/content\/docs\/.*\.(?:md|mdx|txt)$/i.test(file) ||
+      starlightPage.test(file) ||
+      /^packages\/web\/src\/content\/docs\/.*\.txt$/i.test(file) ||
       (/^packages\/web\/src\/content\/docs\//.test(file) && docStaticImage.test(file))
     ) {
       return false
@@ -298,18 +314,32 @@ export function hasReviewablePaths(diff: string, mdxSources?: MdxSourceMap): boo
   })
 }
 
+function starlightHead(doc: string): unknown {
+  // Match the opening frontmatter block recognized by Astro's Markdown parser.
+  const match = /(?:^\uFEFF?|^\s*\n)(---|\+\+\+)([\s\S]*?\n)(?:---|\+\+\+)/.exec(doc)
+  if (!match) return []
+  const frontmatter = match[2]!
+  try {
+    const data: unknown = match[1] === "+++" ? Bun.TOML.parse(frontmatter) : Bun.YAML.parse(frontmatter)
+    return data && typeof data === "object" && "head" in data ? data.head : []
+  } catch {
+    // Keep changes reviewable when the frontmatter cannot be parsed.
+    return { unparsed: frontmatter }
+  }
+}
+
 function isReviewableMdxFile(
   file: string,
-  entry: DiffMdxEntry | undefined,
+  entry: DiffDocEntry | undefined,
   locations: DiffLineMap,
-  mdxSources?: MdxSourceMap,
+  docSources?: MdxSourceMap,
 ): boolean {
   const targetKey = entry?.targetFile ?? file
-  const hasFullLeft = Boolean(mdxSources?.left.has(targetKey))
-  const hasFullRight = Boolean(mdxSources?.right.has(targetKey))
+  const hasFullLeft = Boolean(docSources?.left.has(targetKey))
+  const hasFullRight = Boolean(docSources?.right.has(targetKey))
   if (hasFullLeft || hasFullRight) {
-    const leftDoc = mdxSources?.left.get(targetKey) ?? ""
-    const rightDoc = mdxSources?.right.get(targetKey) ?? ""
+    const leftDoc = docSources?.left.get(targetKey) ?? ""
+    const rightDoc = docSources?.right.get(targetKey) ?? ""
     const leftExec = mdxExecutableLines(leftDoc)
     const rightExec = mdxExecutableLines(rightDoc)
     const deletedLines = locations.left.get(targetKey) ?? new Set<number>()
@@ -759,8 +789,8 @@ export async function runReview() {
     "--unified=0",
     `${base}...${head}`,
   ])
-  const mdxSources = await loadDiffMdxSources(diff, base, head, root)
-  if (process.env.CODEX_REVIEW_DRY_RUN !== "true" && !hasReviewablePaths(diff, mdxSources)) {
+  const docSources = await loadDiffMdxSources(diff, base, head, root)
+  if (process.env.CODEX_REVIEW_DRY_RUN !== "true" && !hasReviewablePaths(diff, docSources)) {
     return { skipped: "docs-only", head }
   }
   const directory = path.join(required("RUNNER_TEMP"), "cz-ai-review")

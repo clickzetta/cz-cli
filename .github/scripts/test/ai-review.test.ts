@@ -375,6 +375,73 @@ test("pure-deletion hunks and deleted files validate cleanly on LEFT side and ha
   expect(hasReviewablePaths(modeOnlyDiff)).toBe(true)
 })
 
+const author = ["head:", "  - tag: meta", "    attrs:", "      name: author", "      content: Docs Team"]
+const updatedAuthor = [...author.slice(0, -1), "      content: Documentation Team"]
+const page = (title: string, head: string[] = []) =>
+  ["---", `title: ${title}`, ...head, "---", "", "Guide prose.", ""].join("\n")
+
+const metadataCases = [
+  { operation: "adding head", before: page("Guide"), after: page("Guide", author), reviewable: true },
+  { operation: "editing head", before: page("Guide", author), after: page("Guide", updatedAuthor), reviewable: true },
+  { operation: "deleting head", before: page("Guide", author), after: page("Guide"), reviewable: true },
+  { operation: "editing title", before: page("Guide"), after: page("New Guide"), reviewable: false },
+  {
+    operation: "editing title with unchanged head",
+    before: page("Guide", author),
+    after: page("New Guide", author),
+    reviewable: false,
+  },
+  {
+    operation: "adding TOML head",
+    before: '+++\ntitle = "Guide"\n+++\nGuide prose.\n',
+    after: '+++\ntitle = "Guide"\n[[head]]\ntag = "meta"\n[head.attrs]\nname = "author"\ncontent = "Docs Team"\n+++\nGuide prose.\n',
+    reviewable: true,
+  },
+]
+
+test.each([
+  ...metadataCases.flatMap((scenario) =>
+    ["mdx", "md"].map((extension) => ({
+      ...scenario,
+      file: `packages/web/src/content/docs/guide.${extension}`,
+    })),
+  ),
+  {
+    operation: "adding head outside the Starlight collection",
+    before: page("Guide"),
+    after: page("Guide", author),
+    reviewable: false,
+    file: "packages/docs/guide.mdx",
+  },
+])("Page metadata review classification for $operation in $file", async ({ before, after, reviewable, file }) => {
+  const repo = mkdtempSync(path.join(tmpdir(), "review-page-metadata-"))
+  const git = (...args: string[]) => {
+    const result = Bun.spawnSync(
+      ["git", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "-c", "commit.gpgsign=false", ...args],
+      { cwd: repo },
+    )
+    if (result.exitCode !== 0) throw new Error(result.stderr.toString())
+    return result.stdout.toString().trimEnd()
+  }
+  try {
+    git("init", "-q", "--initial-branch=main")
+    await Bun.write(path.join(repo, file), before)
+    git("add", file)
+    git("commit", "-qm", "base")
+    const base = git("rev-parse", "HEAD")
+    await Bun.write(path.join(repo, file), after)
+    git("commit", "-qam", "head")
+    const head = git("rev-parse", "HEAD")
+    const diff = git("diff", "--no-color", "--src-prefix=a/", "--dst-prefix=b/", "--unified=0", `${base}...${head}`)
+    const sources = await loadDiffMdxSources(diff, base, head, repo)
+    expect(sources.left.get(file)).toBe(before)
+    expect(sources.right.get(file)).toBe(after)
+    expect(hasReviewablePaths(diff, sources)).toBe(reviewable)
+  } finally {
+    rmSync(repo, { recursive: true, force: true })
+  }
+})
+
 test("root Markdown with spaces skips review while AGENTS.md and CLAUDE.md trigger and run review", async () => {
   const spacedRootDoc =
     'diff --git "a/Release Notes.md" "b/Release Notes.md"\n--- "a/Release Notes.md"\n+++ "b/Release Notes.md"\n@@ -1 +1 @@\n-old\n+new\n'
