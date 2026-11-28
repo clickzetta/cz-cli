@@ -3483,7 +3483,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               const endTime = taskDetail?.executeEndTime ?? detailData?.executeEndTime
               const failMsg = taskDetail?.failMsg ?? detailData?.failMsg
               const succeeded = statusCode === StudioTaskRunStatus.Success
-              const failed = statusCode === StudioTaskRunStatus.Failed || (initialDraft && statusCode === StudioTaskRunStatus.UpstreamFailed)
+              const failed = statusCode === StudioTaskRunStatus.Failed || statusCode === StudioTaskRunStatus.UpstreamFailed
               const unrecognizedStatus = typeof statusCode !== "number" || !Object.hasOwn(TASK_RUN_STATUS_NAMES, statusCode)
               const isTerminal = succeeded || failed || (endTime != null && (statusCode == null || (initialDraft && unrecognizedStatus)))
               if (isTerminal) {

@@ -32,6 +32,10 @@ read and save endpoints report status information without displaying server
 response text that could contain parameter values. On success, both content-save
 commands return a local `Draft saved` acknowledgement and the Studio URL.
 
+`task execute` treats Studio run status `UPSTREAM_FAILED` (8) as a terminal
+failure and reports `EXECUTE_FAILED` on the poll that receives it, with or
+without `--save-params`.
+
 `task execute --param key=value --save-params` checks the draft before execution.
 After Studio reports a successful run status, the command reads the draft again
 and merges the supplied values into the latest parameter records, retaining
