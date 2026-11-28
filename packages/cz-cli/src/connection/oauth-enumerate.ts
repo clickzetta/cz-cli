@@ -1,6 +1,6 @@
 import { listUserWorkspaces, toServiceUrl } from "@clickzetta/sdk"
 import type { AuthToken } from "@clickzetta/sdk"
-import type { OAuthInstance } from "../commands/login-browser.js"
+import type { OAuthInstance } from "../commands/oauth-userinfo.js"
 import { verbatimTokenSource } from "./token-source.js"
 
 /**

@@ -716,6 +716,71 @@ export function tokenToEntry(token: AuthToken): Record<string, unknown> {
 }
 
 /**
+ * Fields that live in `[oauth.<id>]` alongside the token without being part of it
+ * — session-scoped memory such as the menu's `last_provider` hint.
+ *
+ * They have to be named because a token write REPLACES the whole subtable, so
+ * anything absent from this list is dropped by the next refresh. The merge is
+ * deliberately one-directional rather than a blanket `{...previous, ...entry}`:
+ * `tokenToEntry` omits `refresh_token` / `issuer` when the new token has none, and
+ * a blanket merge would resurrect the previous login's values for them.
+ */
+const SESSION_SCOPED_OAUTH_KEYS = ["last_provider"] as const
+
+/**
+ * Write a token into `[oauth.<id>]`, carrying the session-scoped fields across.
+ *
+ * The only place a token replaces that subtable, so the carry-over cannot be
+ * forgotten at one call site — which is exactly the failure this replaced: the
+ * hint survived login's own write ordering and was then erased by the first
+ * runtime token refresh, a writer login has no control over.
+ */
+function writeOAuthEntry(shared: Record<string, unknown>, id: string, token: AuthToken): void {
+  const previous = shared[id]
+  const carried: Record<string, unknown> = {}
+  if (previous && typeof previous === "object" && !Array.isArray(previous)) {
+    for (const key of SESSION_SCOPED_OAUTH_KEYS) {
+      const value = (previous as Record<string, unknown>)[key]
+      if (value !== undefined) carried[key] = value
+    }
+  }
+  shared[id] = { ...carried, ...tokenToEntry(token) }
+}
+
+/**
+ * Navigate a parsed profiles.toml to `[oauth.<id>]`, or undefined when the table
+ * or the entry is missing (or is not a table). Shared by the readers and the
+ * patcher so the object guards are written once instead of at each of them.
+ */
+function oauthEntry(data: Record<string, unknown>, id: string): Record<string, unknown> | undefined {
+  const shared = data.oauth
+  if (!shared || typeof shared !== "object" || Array.isArray(shared)) return undefined
+  const entry = (shared as Record<string, unknown>)[id]
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) return undefined
+  return entry as Record<string, unknown>
+}
+
+/**
+ * Merge `patch` into an EXISTING `[oauth.<id>]` and write the file back.
+ *
+ * Never creates the section: with no login there is no token to attach
+ * session-scoped state to, and writing one would mint an orphan `[oauth.<id>]`
+ * that {@link pruneOrphanOAuthSections} would have to clean up again.
+ * Best-effort — a failure costs the stored hint, never a login.
+ */
+function patchOAuthEntry(id: string, patch: Record<string, unknown>): void {
+  try {
+    const data = parseTOML(readFileSync(profilesFile(), "utf-8")) as Record<string, unknown>
+    const entry = oauthEntry(data, id)
+    if (!entry) return
+    Object.assign(entry, patch)
+    writeProfilesFile(stringifyTOML(data))
+  } catch {
+    // best-effort
+  }
+}
+
+/**
  * Resolve the shared-oauth id a profile points at. New layout stores a string
  * pointer (`oauth = "<id>"`); returns undefined when absent or (legacy) an
  * inline object — the caller falls back to the legacy inline read.
@@ -815,7 +880,7 @@ export function makeProfileTokenStore(profileName: string | undefined, oauthId?:
         }
 
         const shared = (data.oauth ?? {}) as Record<string, unknown>
-        shared[id] = tokenToEntry(token)
+        writeOAuthEntry(shared, id, token)
         data.oauth = shared
 
         // Point this profile at the shared section.
@@ -922,10 +987,40 @@ export function readSessionIssuer(id: string): string | undefined {
 export function saveSharedOAuthToken(id: string, token: AuthToken): void {
   mutateProfilesFile((data) => {
     const shared = (data.oauth ?? {}) as Record<string, unknown>
-    shared[id] = tokenToEntry(token)
+    writeOAuthEntry(shared, id, token)
     data.oauth = shared
     return data
   })
+}
+
+/**
+ * Remember which sign-in route this session last used, so a re-login can preselect
+ * it instead of asking the same question the same way every time.
+ *
+ * Stored as `last_provider` inside `[oauth.<id>]` rather than on a profile: it is
+ * session-scoped, and living in the token section means `auth logout <name>` drops
+ * it along with the token instead of leaving a stale hint behind. Token refreshes
+ * carry it across (see {@link writeOAuthEntry}), but provisioning replaces the
+ * section without that merge, so the login flow saves it after provisioning.
+ */
+export function saveLastProvider(id: string, provider: string): void {
+  // Cannot fail a login: patchOAuthEntry swallows read/write errors itself.
+  patchOAuthEntry(id, { last_provider: provider })
+}
+
+/**
+ * The route {@link saveLastProvider} recorded, or undefined if this session has
+ * none yet. Returned verbatim; the caller decides whether it still names something
+ * offerable (a route can stop being on the menu between versions).
+ */
+export function readLastProvider(id: string): string | undefined {
+  try {
+    const data = parseTOML(readFileSync(profilesFile(), "utf-8")) as Record<string, unknown>
+    const value = oauthEntry(data, id)?.last_provider
+    return typeof value === "string" && value.length > 0 ? value : undefined
+  } catch {
+    return undefined
+  }
 }
 
 /**
@@ -960,7 +1055,7 @@ export function migrateInlineOAuthTokens(): void {
           continue
         }
         const id = generateOAuthId()
-        shared[id] = tokenToEntry(token)
+        writeOAuthEntry(shared, id, token)
         profile.oauth = id
         changed = true
         void name

@@ -1,5 +1,5 @@
 import type { AuthToken } from "@clickzetta/sdk"
-import type { BrowserLoginResult } from "../commands/login-browser.js"
+import type { OAuthLoginResult } from "../commands/oauth-userinfo.js"
 import type { OAuthConnCombo } from "./oauth-enumerate.js"
 import { readLlmEntries, setActiveModel, writeLlmEntries } from "../llm/native-config.js"
 import {
@@ -140,7 +140,7 @@ export interface OAuthProvisionInput {
   /** The exchanged OAuth token, already backfilled with userId/instanceId. */
   token: AuthToken
   /** Parsed userinfo connection context (undefined when userinfo failed). */
-  userInfo?: BrowserLoginResult["userInfo"]
+  userInfo?: OAuthLoginResult["userInfo"]
   /**
    * Region-specific business service host to persist. Derived from userinfo's
    * gatewayMapping (falling back to the login entry host), NOT from any prior

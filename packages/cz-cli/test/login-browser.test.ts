@@ -3,12 +3,9 @@ import { get } from "node:http"
 
 import { isLocalCallbackEnabled } from "@clickzetta/sdk"
 import { loginWithBrowser } from "../src/commands/login-browser"
+import { jsonResponse, restoreFetch, stubGlobalFetch, TOKEN_RESPONSE } from "./support/oauth-stub"
 
-const realFetch = globalThis.fetch
-
-afterEach(() => {
-  globalThis.fetch = realFetch
-})
+afterEach(restoreFetch)
 
 const ISSUER = "https://api.example.com"
 // The discovery document deliberately puts authorize on a DIFFERENT host from
@@ -57,20 +54,6 @@ function httpGet(url: string): Promise<void> {
   })
 }
 
-function jsonResponse(body: unknown, status = 200): Response {
-  // openid-client requires an explicit JSON content-type on every response.
-  return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } })
-}
-
-const TOKEN_RESPONSE = {
-  access_token: "access-xyz",
-  refresh_token: "refresh-xyz",
-  expires_in: 3600,
-  // Must be present and case-insensitively "bearer", else the library throws
-  // UnsupportedOperationError.
-  token_type: "Bearer",
-}
-
 const SAMPLE_USERINFO = {
   userId: 110000011361,
   accountName: "wynptmks",
@@ -101,7 +84,7 @@ interface StubOptions {
  */
 function stubFetch(opts: StubOptions = {}): { requests: string[] } {
   const requests: string[] = []
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  stubGlobalFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
     requests.push(url)
     opts.onRequest?.(url, init)
@@ -114,7 +97,7 @@ function stubFetch(opts: StubOptions = {}): { requests: string[] } {
       return opts.userinfo ? opts.userinfo() : jsonResponse(SAMPLE_USERINFO)
     }
     throw new Error(`unexpected fetch to ${url}`)
-  }) as typeof fetch
+  })
   return { requests }
 }
 
@@ -147,7 +130,7 @@ describe("loginWithBrowser", () => {
 
     const result = await loginWithBrowser({
       baseUrl: ISSUER,
-      openBrowser: fakeBrowser,
+      browserAvailable: true, openBrowser: fakeBrowser,
       timeoutMs: 5000,
     })
 
@@ -202,7 +185,7 @@ describe("loginWithBrowser", () => {
 
     await loginWithBrowser({
       baseUrl: ISSUER,
-      openBrowser: (authorizeUrl) => {
+      browserAvailable: true, openBrowser: (authorizeUrl) => {
         const parsed = readAuthorizeUrl(authorizeUrl)
         void httpGet(`${parsed.redirectUri}?code=THE_CODE&state=${parsed.state}`)
       },
@@ -227,7 +210,7 @@ describe("loginWithBrowser", () => {
 
     await loginWithBrowser({
       baseUrl: ISSUER,
-      openBrowser: (authorizeUrl) => {
+      browserAvailable: true, openBrowser: (authorizeUrl) => {
         const parsed = readAuthorizeUrl(authorizeUrl)
         void httpGet(`${parsed.redirectUri}?code=THE_CODE&state=${parsed.state}`)
       },
@@ -248,7 +231,7 @@ describe("loginWithBrowser", () => {
 
     await loginWithBrowser({
       baseUrl: ISSUER,
-      openBrowser: (authorizeUrl) => {
+      browserAvailable: true, openBrowser: (authorizeUrl) => {
         const parsed = readAuthorizeUrl(authorizeUrl)
         params = parsed.params
         void httpGet(`${parsed.redirectUri}?code=THE_CODE&state=${parsed.state}`)
@@ -278,7 +261,7 @@ describe("loginWithBrowser", () => {
 
     await loginWithBrowser({
       baseUrl: ISSUER,
-      openBrowser: (authorizeUrl) => {
+      browserAvailable: true, openBrowser: (authorizeUrl) => {
         const parsed = readAuthorizeUrl(authorizeUrl)
         opened = parsed.url
         void httpGet(`${parsed.redirectUri}?code=THE_CODE&state=${parsed.state}`)
@@ -312,7 +295,7 @@ describe("loginWithBrowser", () => {
 
     const result = await loginWithBrowser({
       baseUrl: ISSUER,
-      openBrowser: (authorizeUrl) => {
+      browserAvailable: true, openBrowser: (authorizeUrl) => {
         const parsed = readAuthorizeUrl(authorizeUrl)
         void httpGet(`${parsed.redirectUri}?code=THE_CODE&state=${parsed.state}`)
       },
@@ -335,7 +318,7 @@ describe("loginWithBrowser", () => {
 
     const result = await loginWithBrowser({
       baseUrl: ISSUER,
-      openBrowser: (authorizeUrl) => {
+      browserAvailable: true, openBrowser: (authorizeUrl) => {
         const parsed = readAuthorizeUrl(authorizeUrl)
         void httpGet(`${parsed.redirectUri}?code=THE_CODE&state=${parsed.state}`)
       },
@@ -355,7 +338,7 @@ describe("loginWithBrowser", () => {
 
     const promise = loginWithBrowser({
       baseUrl: ISSUER,
-      openBrowser: (authorizeUrl) => {
+      browserAvailable: true, openBrowser: (authorizeUrl) => {
         const parsed = readAuthorizeUrl(authorizeUrl)
         void httpGet(`${parsed.redirectUri}?code=THE_CODE&state=${parsed.state}`)
       },
@@ -381,7 +364,7 @@ describe("loginWithBrowser", () => {
     }
 
     await expect(
-      loginWithBrowser({ baseUrl: ISSUER, openBrowser: fakeBrowser, timeoutMs: 5000 }),
+      loginWithBrowser({ baseUrl: ISSUER, browserAvailable: true, openBrowser: fakeBrowser, timeoutMs: 5000 }),
     ).rejects.toThrow(/state mismatch/)
   })
 
@@ -402,7 +385,7 @@ describe("loginWithBrowser", () => {
     const result = await loginWithBrowser({
       baseUrl: ISSUER,
       // Never drive the loopback, so the wait times out.
-      openBrowser: (authorizeUrl) => {
+      browserAvailable: true, openBrowser: (authorizeUrl) => {
         state = readAuthorizeUrl(authorizeUrl).state
       },
       timeoutMs: 30,
@@ -421,7 +404,7 @@ describe("loginWithBrowser", () => {
     await expect(
       loginWithBrowser({
         baseUrl: ISSUER,
-        openBrowser: () => {},
+        browserAvailable: true, openBrowser: () => {},
         timeoutMs: 30,
         promptManualUrl: async () => undefined,
       }),
@@ -441,7 +424,7 @@ describe("loginWithBrowser", () => {
     await expect(
       loginWithBrowser({
         baseUrl: ISSUER,
-        openBrowser: fakeBrowser,
+        browserAvailable: true, openBrowser: fakeBrowser,
         timeoutMs: 5000,
         promptManualUrl: async () => {
           prompted = true
@@ -458,7 +441,7 @@ describe("loginWithBrowser", () => {
     await expect(
       loginWithBrowser({
         baseUrl: ISSUER,
-        openBrowser: () => {},
+        browserAvailable: true, openBrowser: () => {},
         timeoutMs: 30,
         promptManualUrl: async () => "http://127.0.0.1:1234/callback?authorizationCode=X&state=forged",
       }),
@@ -475,5 +458,35 @@ describe("loginWithBrowser", () => {
     } finally {
       if (original !== undefined) process.env.CZ_OAUTH_LOCAL_CALLBACK = original
     }
+  })
+})
+
+// Over SSH a launched browser opens on the remote machine and the loopback redirect
+// never reaches this one, so the opener is skipped and the paste fallback is the
+// announced path, not a surprise after a timeout.
+describe("loginWithBrowser without a local browser", () => {
+  test("does not launch a browser and points the user at the paste step", async () => {
+    stubFetch()
+    let opened = 0
+    const logs: string[] = []
+    const originalLog = console.log
+    console.log = (...args: unknown[]) => logs.push(args.join(" "))
+    try {
+      await expect(
+        loginWithBrowser({
+          baseUrl: ISSUER,
+          browserAvailable: false,
+          openBrowser: () => {
+            opened += 1
+          },
+          timeoutMs: 30,
+          promptManualUrl: async () => undefined,
+        }),
+      ).rejects.toThrow()
+    } finally {
+      console.log = originalLog
+    }
+    expect(opened).toBe(0)
+    expect(logs.join("\n")).toContain("No browser on this machine")
   })
 })

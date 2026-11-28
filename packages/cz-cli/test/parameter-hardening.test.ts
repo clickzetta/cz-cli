@@ -776,6 +776,23 @@ describe("second-round review fixes", () => {
   })
 })
 
+describe("--provider choices used to reject the aliases normalizeProvider accepts", () => {
+  // stdin is not a TTY here, so a value that passes validation stops at the TTY
+  // guard: DEVICE_LOGIN_REQUIRES_TTY is the "accepted" outcome.
+  test.each(["alipay", "ALIPAY", "wechat"])("--provider %s reaches the device flow", (provider) => {
+    const r = run(["auth", "login", "s", "--provider", provider, "--format", "json"], {}, makeHome(""))
+    expect(errorOf(r.stdout).code).toBe("DEVICE_LOGIN_REQUIRES_TTY")
+    expect(hasStackTrace(r.stderr)).toBe(false)
+  })
+
+  test("an unknown provider is still a usage error", () => {
+    const r = run(["auth", "login", "s", "--provider", "qq", "--format", "json"], {}, makeHome(""))
+    expect(r.exitCode).toBe(2)
+    expect(errorOf(r.stdout).code).toBe("USAGE_ERROR")
+    expect(errorOf(r.stdout).message).toContain("DEVICE_PROVIDER_INVALID")
+  })
+})
+
 describe("looksLikeShellSplitSql (unit)", () => {
   const SPLIT = ["SELECT", "CASE", "WHEN", "c", "LIKE", "'%a%'", "THEN", "1", "ELSE", "2", "END", "FROM", "t"]
   const SPLIT_MSG = "Unknown arguments: CASE, WHEN, c, LIKE, '%a%', THEN, 1, ELSE, 2, END, FROM, t"
