@@ -214,6 +214,20 @@ test.each([
     .toEqual([detailPath, executePath, runDetailPath])
 })
 
+test("task execute without persistence stops at the first UPSTREAM_FAILED poll", async () => {
+  const result = await runTask([
+    "execute", "123", "--content", "SELECT 1", "--vc", "test-vc", "--param", "example=override", "--poll-interval", "0",
+  ], true, false, { [runDetailPath]: [ok({ instanceStatus: 8 }), ok({ instanceStatus: 1 })] })
+  expect(requests.filter((path) => [detailPath, executePath, runDetailPath, savePath].includes(path)), result.stdout)
+    .toEqual([detailPath, executePath, runDetailPath])
+  expect(result.adhoc).toHaveLength(1)
+  expect(saves).toHaveLength(0)
+  expect(result.code).toBe(1)
+  expect(JSON.parse(result.stdout)).toEqual({
+    error: { code: "EXECUTE_FAILED", message: "Ad hoc run 456 failed. Check the run in Studio for details." },
+  })
+})
+
 test.each([
   ["omitted status", undefined, "UNKNOWN"],
   ["unrecognized code", 99, "99"],
